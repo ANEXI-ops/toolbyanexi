@@ -1,5 +1,3 @@
-cd ~
-cat > requirements.txt << 'EOF'
 python-telegram-bot
 pandas
 openpyxl
@@ -7,5 +5,3 @@ requests
 phonenumbers
 dnspython
 Flask
-EOF
-cat requirements.txt
