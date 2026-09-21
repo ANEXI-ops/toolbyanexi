@@ -1,5 +1,5 @@
 # ═══════════════════════════════════════════════════════════
-#  STUDENT FINDER BOT — AUTO-OSINT + TYPING ANIMATIONS
+#  STUDENT FINDER BOT — AUTO-OSINT + TYPING + FLASK (Render)
 # ═══════════════════════════════════════════════════════════
 
 import os
@@ -9,6 +9,7 @@ import random
 import hashlib
 import asyncio
 import urllib.parse
+import threading
 import requests
 import dns.resolver
 import phonenumbers
@@ -20,10 +21,18 @@ from telegram.ext import (
     MessageHandler, filters, ContextTypes
 )
 
+# ── Flask (Render ke liye) ──
+from flask import Flask, jsonify
+
 # ═══════════════════════════════════════════════
 #  CONFIG
 # ═══════════════════════════════════════════════
-BOT_TOKEN = "8861209711:AAHdD51ICTzAaYlif51rQHCKn3B4QMi-Msg"
+# Render pe environment variable se token milega, local pe fallback
+BOT_TOKEN = os.environ.get(
+    "TELEGRAM_BOT_TOKEN",
+    "8861209711:AAHdD51ICTzAaYlif51rQHCKn3B4QMi-Msg"   # 👈 fallback (revoke kar)
+)
+
 EXCEL_FILE = "studentsdb3rdsem.xlsx"
 CSV_FILES = [
     "students_data.csv",
@@ -32,7 +41,7 @@ CSV_FILES = [
 ]
 HEADER_ROW = 2
 MAX_RESULTS = 5
-ENABLE_AUTO_OSINT = True   # set False to disable auto OSINT
+ENABLE_AUTO_OSINT = True
 
 # ═══════════════════════════════════════════════
 #  ROAST TARGET
@@ -132,6 +141,23 @@ SCREENSHOT_DATA = {
     "256290305224": ("VASAVA YES BHIKHABHAI",                 "bhikhabhiavashava@gmail.com",       "9512464266"),
     "256290305225": ("VORA JAYESH HIMMATBHAI",                "himatpatel529@gmail.com",           "9510923071"),
 }
+
+# ═══════════════════════════════════════════════
+#  FLASK APP (Render ke liye — pehle define karo)
+# ═══════════════════════════════════════════════
+flask_app = Flask(__name__)
+
+
+@flask_app.route("/")
+@flask_app.route("/health")
+def health_check():
+    total = len(DF) if "DF" in globals() else 0
+    return jsonify({
+        "status": "ok",
+        "service": "Student Finder Bot",
+        "students": total,
+    })
+
 
 # ═══════════════════════════════════════════════
 #  HELPERS
@@ -297,6 +323,7 @@ def load_students():
 print("📥 Loading data...")
 DF = load_students()
 
+
 # ═══════════════════════════════════════════════
 #  SEARCH + FORMAT
 # ═══════════════════════════════════════════════
@@ -364,11 +391,10 @@ def format_student_telegram(row):
         lines.append("<b>─── Extra Fields ───</b>")
         lines.extend(extras)
 
-    return "\n".join(lines) if lines else "⚠️NO DATA "
+    return "\n".join(lines) if lines else "⚠️ NO DATA"
 
 
 def extract_contacts(row):
-    """Row se email, mobile, username nikalo."""
     email = None
     for col in ["Email", "Registered Email", "Father's Email Address"]:
         if col in row.index:
@@ -442,7 +468,6 @@ def _url_exists(url, timeout=6):
 
 
 def osint_email_block(email):
-    """Email OSINT — breaches + gravatar + github."""
     out = ["<b>📧 EMAIL INTEL</b>", f"<code>{esc(email)}</code>"]
     if not re.fullmatch(r"[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}", email):
         out.append("❌ Invalid format")
@@ -450,7 +475,6 @@ def osint_email_block(email):
 
     domain = email.split("@", 1)[1]
 
-    # Breach check
     try:
         r = requests.get(
             f"https://haveibeenpwned.com/api/v3/breachedaccount/{urllib.parse.quote(email)}?truncateResponse=true",
@@ -471,7 +495,6 @@ def osint_email_block(email):
     except Exception:
         out.append("⚠️ HIBP check fail")
 
-    # Gravatar
     h = hashlib.md5(email.strip().lower().encode()).hexdigest()
     try:
         r = requests.get(f"https://www.gravatar.com/avatar/{h}.json",
@@ -489,7 +512,6 @@ def osint_email_block(email):
     except Exception:
         pass
 
-    # MX
     try:
         mx = dns.resolver.resolve(domain, "MX")
         out.append(f"📮 MX: ✅ {esc(str(mx[0].exchange).rstrip('.'))}")
@@ -500,7 +522,6 @@ def osint_email_block(email):
 
 
 def osint_mobile_block(mobile):
-    """Mobile OSINT — carrier, circle, links."""
     out = ["<b>📱 MOBILE INTEL</b>", f"<code>{esc(mobile)}</code>"]
     num = re.sub(r"\D", "", mobile)
     if len(num) == 10:
@@ -521,7 +542,6 @@ def osint_mobile_block(mobile):
                     3: "🆓 Toll-free", 4: "💰 Premium", 6: "💻 VoIP"}
         out.append(f"📋 {type_map.get(ntype, 'Other')}")
 
-        # WhatsApp check via wa.me (redirect detect)
         last10 = num[-10:]
         out.append(f"🔗 <a href='https://wa.me/91{last10}'>WhatsApp</a>")
         out.append(f"🔗 <a href='https://t.me/+{num}'>Telegram</a>")
@@ -533,7 +553,6 @@ def osint_mobile_block(mobile):
 
 
 def osint_username_block(username, max_sites=25):
-    """Username hunt — 25+ sites."""
     out = ["<b>👤 USERNAME HUNT</b>", f"<code>@{esc(username)}</code>"]
 
     if not re.fullmatch(r"[a-zA-Z0-9_.-]{2,32}", username):
@@ -557,7 +576,6 @@ def osint_username_block(username, max_sites=25):
 
 
 def auto_osint_report(row):
-    """Ek student ka pura OSINT report — email + mobile + username."""
     email, mobile, username = extract_contacts(row)
 
     if not email and not mobile and not username:
@@ -587,10 +605,9 @@ def auto_osint_report(row):
 
 
 # ═══════════════════════════════════════════════
-#  🎬 TYPING ANIMATION HELPER
+#  🎬 TYPING ANIMATION
 # ═══════════════════════════════════════════════
 async def typing_animation(context, chat_id, seconds=3):
-    """Telegram 'typing' indicator dikhata hai."""
     end = asyncio.get_event_loop().time() + seconds
     while asyncio.get_event_loop().time() < end:
         try:
@@ -598,14 +615,6 @@ async def typing_animation(context, chat_id, seconds=3):
         except Exception:
             pass
         await asyncio.sleep(2.5)
-
-
-async def fake_typing_message(update, context, message_text, typing_seconds=2):
-    """Message bhejta hai aur typing animation chalata hai."""
-    msg = await update.message.reply_text(message_text, parse_mode="HTML")
-    # typing animation chalata rahega background me
-    asyncio.create_task(typing_animation(context, update.effective_chat.id, typing_seconds))
-    return msg
 
 
 # ═══════════════════════════════════════════════
@@ -633,19 +642,20 @@ def is_target(q):
 # ═══════════════════════════════════════════════
 async def start_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = (
-        "⚠️Disclaimer: This bot is intended for educational and administrative purposes only. The owner/developer assumes no liability for any misuse, privacy violations, or illegal activities conducted by users. Use responsibly.</b>\n\n"
-        "USE - Send  Name, enrollment, email, mobile, city, branch, "
-        "caste\n\n"
-        "🔎 <b>Examples:</b>\n"
-        "• <code>AHIR AYUSH</code>\n"
-        "• <code>256290305001</code>\n"
-        "• <code>Bharuch</code>\n"
-        "• <code>SEBC</code>\n"
-        "• <code>CH1</code>\n\n"
-        f"📊 Total students: <b>{len(DF)}</b>\n"
-        f"🕵️ Auto-OSINT: <b>{'ON' if ENABLE_AUTO_OSINT else 'OFF'}</b>"
+        "⚠️ Disclaimer: This bot is intended for educational and administrative "
+        "purposes only. The owner/developer assumes no liability for any misuse, "
+        "privacy violations, or illegal activities conducted by users. Use responsibly.\n\n"
+        "USE - Send Name, enrollment, email, mobile, city, branch, caste\n\n"
+        "🔎 Examples:\n"
+        "• AHIR AYUSH\n"
+        "• 256290305001\n"
+        "• Bharuch\n"
+        "• SEBC\n"
+        "• CH1\n\n"
+        f"📊 Total students: {len(DF)}\n"
+        f"🕵️ Auto-OSINT: {'ON' if ENABLE_AUTO_OSINT else 'OFF'}"
     )
-    await update.message.reply_text(text, parse_mode="HTML")
+    await update.message.reply_text(text)
 
 
 async def help_cmd(update, context):
@@ -659,17 +669,14 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     # 🎯 ROAST
     if is_target(query):
-        # Roast ke saath bhi typing animation
         await context.bot.send_chat_action(chat_id=update.effective_chat.id, action="typing")
         await asyncio.sleep(1.5)
         roast = random.choice(ROASTS).format(q=esc(query))
         await update.message.reply_text(roast, parse_mode="HTML")
         return
 
-    # 🎬 Typing animation start
     await context.bot.send_chat_action(chat_id=update.effective_chat.id, action="typing")
 
-    # 🔎 SEARCH
     try:
         results = search_students(DF, query)
     except Exception as e:
@@ -678,23 +685,20 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if results.empty:
         await update.message.reply_text(
-            f"❌ <b>{esc(query)}</b> ke liye kuch nahi mila.\n"
-            f"Spelling check kar ya chhota keyword daal.",
+            f"❌ <b>{esc(query)}</b> not found.\n"
+            f"Check spelling or try a shorter keyword.",
             parse_mode="HTML"
         )
         return
 
     total = len(results)
 
-    # Result count message with typing
     await update.message.reply_text(
-        f"✅ <b>{total}</b> result mile <b>{esc(query)}</b> ke liye:",
+        f"✅ <b>{total}</b> result(s) found for <b>{esc(query)}</b>:",
         parse_mode="HTML"
     )
 
-    # Har student show karo
     for i, (_, row) in enumerate(results.head(MAX_RESULTS).iterrows(), 1):
-        # Typing animation
         await context.bot.send_chat_action(chat_id=update.effective_chat.id, action="typing")
         await asyncio.sleep(0.8)
 
@@ -709,16 +713,14 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 except Exception:
                     pass
 
-        # 🕵️ AUTO-OSINT — sirf pehle result ke liye (target na ho)
+        # 🕵️ AUTO-OSINT
         if ENABLE_AUTO_OSINT and i == 1 and not is_target(query):
-            # OSINT start animation
             osint_msg = await update.message.reply_text(
                 "🕵️ <b>Auto-Investigation start...</b>\n"
-                "<i>Email, Mobile, Username checking ...</i>",
+                "<i>Email, Mobile, Username checking...</i>",
                 parse_mode="HTML"
             )
 
-            # Typing animation chalata rahe
             for stage in [
                 "🔍 <b>Stage 1/4:</b> Email intel... <i>(breaches + gravatar)</i>",
                 "📡 <b>Stage 2/4:</b> Mobile carrier intel...",
@@ -732,10 +734,8 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 except Exception:
                     pass
 
-            # OSINT run (blocking — but with typing indicator)
             await context.bot.send_chat_action(chat_id=update.effective_chat.id, action="typing")
             try:
-                # asyncio loop me blocking call ko thread me chalao
                 loop = asyncio.get_event_loop()
                 report = await loop.run_in_executor(None, auto_osint_report, row)
             except Exception as e:
@@ -758,26 +758,37 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         await update.message.reply_text(re.sub(r"<[^>]+>", "", c)[:4000])
             else:
                 try:
-                    await osint_msg.edit_text("🕵️ OSINT ke liye email/mobile nahi mila is student ka.")
+                    await osint_msg.edit_text("🕵️ No email/mobile available for OSINT on this student.")
                 except Exception:
                     pass
 
     if total > MAX_RESULTS:
         await update.message.reply_text(
-            f"… aur <b>{total - MAX_RESULTS}</b> results hain. Keyword specific kar.",
+            f"… and <b>{total - MAX_RESULTS}</b> more results. Be more specific.",
             parse_mode="HTML"
         )
 
 
 # ═══════════════════════════════════════════════
-#  MAIN
+#  FLASK RUNNER + TELEGRAM MAIN
 # ═══════════════════════════════════════════════
+def run_flask():
+    port = int(os.environ.get("PORT", 8080))
+    print(f"🌐 Flask server starting on port {port}")
+    flask_app.run(host="0.0.0.0", port=port, debug=False, use_reloader=False)
+
+
 def main():
+    # Flask ko background thread me chalao
+    flask_thread = threading.Thread(target=run_flask, daemon=True)
+    flask_thread.start()
+
+    # Telegram bot foreground me
     app = ApplicationBuilder().token(BOT_TOKEN).build()
     app.add_handler(CommandHandler("start", start_cmd))
     app.add_handler(CommandHandler("help", help_cmd))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
-    print("🤖 Bot chal raha hai... Ctrl+C se band karo.")
+    print("🤖 Bot is running... Press Ctrl+C to stop.")
     app.run_polling()
 
 
