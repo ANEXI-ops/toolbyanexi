@@ -30,7 +30,7 @@ from flask import Flask, jsonify
 # Render pe environment variable se token milega, local pe fallback
 BOT_TOKEN = os.environ.get(
     "TELEGRAM_BOT_TOKEN",
-    "8676422370:AAEbV8NF9U8XsXhWBmawdohtSPf6hA6LmpI"   # 👈 fallback (revoke kar)
+    "8676422370:AAGCUUz_jbecABc2gEkg1MxJcJ4QfCv3qLY"   # 👈 fallback (revoke kar)
 )
 
 EXCEL_FILE = "studentsdb3rdsem.xlsx"
