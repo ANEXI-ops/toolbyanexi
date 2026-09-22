@@ -1,10 +1,11 @@
 # ═══════════════════════════════════════════════════════════
-#  STUDENT FINDER BOT — AUTO-OSINT + TYPING + FLASK (Render)
+#  STUDENT FINDER BOT — Admin Panel + OSINT + Flask
 # ═══════════════════════════════════════════════════════════
 
 import os
 import re
 import html
+import json
 import random
 import hashlib
 import asyncio
@@ -15,33 +16,32 @@ import dns.resolver
 import phonenumbers
 import pandas as pd
 from phonenumbers import geocoder, carrier, timezone as ph_tz
-from telegram import Update
-from telegram.ext import (
-    ApplicationBuilder, CommandHandler,
-    MessageHandler, filters, ContextTypes
+from telegram import (
+    Update, InlineKeyboardButton, InlineKeyboardMarkup
 )
-
-# ── Flask (Render ke liye) ──
+from telegram.ext import (
+    ApplicationBuilder, CommandHandler, MessageHandler,
+    CallbackQueryHandler, filters, ContextTypes
+)
 from flask import Flask, jsonify
 
 # ═══════════════════════════════════════════════
 #  CONFIG
 # ═══════════════════════════════════════════════
-# Render pe environment variable se token milega, local pe fallback
-BOT_TOKEN = os.environ.get(
-    "TELEGRAM_BOT_TOKEN",
-    "8676422370:AAGCUUz_jbecABc2gEkg1MxJcJ4QfCv3qLY"   # 👈 fallback (revoke kar)
-)
+BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "8676422370:AAGCUUz_jbecABc2gEkg1MxJcJ4QfCv3qLY")
+
+# ── ADMIN USER ID (apna Telegram ID daal) ──
+# Apni ID pata karne ke liye @userinfobot ko /start bhej
+ADMIN_USER_ID = int(os.environ.get("ADMIN_USER_ID", "0"))
 
 EXCEL_FILE = "studentsdb3rdsem.xlsx"
-CSV_FILES = [
-    "students_data.csv",
-    "feedback_sheet.csv",
-    "feedback_sheet_2.csv",
-]
+CSV_FILES = ["students_data.csv", "feedback_sheet.csv", "feedback_sheet_2.csv"]
 HEADER_ROW = 2
 MAX_RESULTS = 5
 ENABLE_AUTO_OSINT = True
+
+# Admin data file (Render pe ephemeral hai, restart pe reset hoga)
+DATA_FILE = "bot_data.json"
 
 # ═══════════════════════════════════════════════
 #  ROAST TARGET
@@ -69,81 +69,139 @@ ROASTS = [
 ]
 
 # ═══════════════════════════════════════════════
-#  SCREENSHOT DATA
+#  SCREENSHOT DATA (as it is)
 # ═══════════════════════════════════════════════
 SCREENSHOT_DATA = {
-    "256290305004": ("AHIR DHRUVKUMAR JAYESHBHAI",            "ahirjayesh269@gmail.com",           "9099821439"),
-    "256290305006": ("AHIR MAYANKBHAI BIPINBHAI",             "ahirmayank87@gmail.com",            "7383624573"),
-    "256290305008": ("BARIYA DHRUVKUMAR ASHVINBHAI",          "dhruvbariya766@gmail.com",          "9313876921"),
-    "256290305010": ("BARIYA ROHIT MUKESH",                   "Sejalbariya29@gmail.com",           "9023379994"),
-    "256290305012": ("BHIMDA SHUBHAMKUMAR NARENDRABHAI",      "bhimdashubham2009@gmail.com",       "8866311261"),
-    "256290305013": ("BUTANI KRISHIV KIRITBHAI",              "Krishivbutani18025@gmail.com",      "9601785530"),
-    "256290305015": ("CHAUHAN RAJVIR MAHENDRABHAI",           "sushilabenmchauhan2008@gmail.com",  "7069501390"),
-    "256290305023": ("DIWAN AMAN PYARMADAR",                  "diwanaman2160@gmail.com",           "8160132906"),
-    "256290305024": ("DIWAN MOHMMEDZAID ILYASAGANI",          "ZAIDGAMERZ2049@GMAIL.COM",          "9512305072"),
-    "256290305026": ("GADARIYA MEET BHUPENDRASINH",           "ddharatigararia@gmail.com",         "9316167238"),
-    "256290305028": ("GANDHI JENIL PRAGNESHKUMAR",            "gandhijenil1505@gmail.com",         "6352907051"),
-    "256290305030": ("GHANCHI RIZAWAN YUNUSHBHAI",            "Ghanchiyunush438@gmail.com",        "7383902608"),
-    "256290305034": ("GOHIL DHAVALBHAI MUKESHBHAI",           "gohildthaval0743@gmail.com",        "9773404691"),
-    "256290305040": ("GOHIL NIRAV NARESHBHAI",                "gohilanresh971@gmail.com",          "9979388960"),
-    "256290305050": ("KACHHIYA KUSHALKUMAR SANJAYBHAI",       "kachhiyakrinalkachhiya@gmail.com",  "9998079666"),
-    "256290305055": ("KAYASTH NEEL PRADIPKUMAR",              "shetalkayasht271@gmail.com",        "9574859142"),
-    "256290305065": ("MACHHI BHARGAV MUKESHBHAI",             "seemammachhi@gmail.com",            "9723468510"),
-    "256290305068": ("MACHHI JAJUMAR JASHVANTBHAI",           "jaswantmachhi2017@gmail.com",       "9904936596"),
-    "256290305070": ("MACHHI MOHIT RAKESHBHAI",               "kaddhadyas@gmail.com",              "76968697024"),
-    "256290305071": ("MACHHI OMKUMAR ASHOKBHAI",              "machhiom77@gmail.com",              "9737852427"),
-    "256290305072": ("MACHHI PARTHIV HARISHANKAR",            "suniele93@gmail.com",               "9624549003"),
-    "256290305074": ("MACHHI SHUBHAM TARUNBHAI",              "jigneshantdel12@gmail.com",         "9904076390"),
-    "256290305076": ("MACHHI TANMAY PRAVINBHAI",              "machhidivyang019@gmail.com",        "8758250771"),
-    "256290305079": ("MAHIDA HARIPALSINH BHARATSINH",         "mahidaharpal92@gmail.com",          "7623049257"),
-    "256290305084": ("MAKWANA KABIRKUMAR PRITESHBHAI",        "ndparmar2812@gmail.com",            "9824533199"),
-    "256290305086": ("MAKWANA MAULIKBHAI VIMALBHAI",          "maulikhapul42@gmail.com",           "9328762041"),
-    "256290305087": ("MAKWANA NAITIK MAHENDRABHAI",           "mahendramakwana88906@gmail.com",    "9723847063"),
-    "256290305097": ("MISTRY HET JAYESHBHAI",                 "hetmistry1109@gmail.com",           "9316358795"),
-    "256290305107": ("PAREKH YAKSH HIRENKUMAR",               "yakshparekh12@gmail.com",           "9725916209"),
-    "256290305122": ("PATANVADIYA TARUNBHAI RAJUBHAI",        "rajuthakor9898236282@gmail.com",    "9157784388"),
-    "256290305123": ("PATEL AYAN IRFANBHAI",                  "irfanpatel4423@gmail.com",          "9227111284"),
-    "256290305124": ("PATEL AYUSH HARESHBHAI",                "hareshpatel968@gmail.com",          "8989280199"),
-    "256290305128": ("PATEL DHRUVALKUMAR PRAKASHBHAI",        "pp6484077@gmail.com",               "8460113560"),
-    "256290305129": ("PATEL DHRUVIK ANILBHAI",                "dhruvik2009@gmail.com",             "6352286480"),
-    "256290305132": ("PATEL FENILKUMAR KAMLESHBHAI",          "patelkrish4927@gmail.com",          "9313339032"),
-    "256290305134": ("PATEL HENIL SANJAYBHAI",                "bmp407@gmail.com",                  "9638263597"),
-    "256290305135": ("PATEL HET PRADIPBHAI",                  "meshwapatel2595@gmail.com",         "9825953167"),
-    "256290305139": ("PATEL JENISH MITULKUMAR",               "jeniship2710@gmail.com",            "9157507626"),
-    "256290305144": ("PATEL MEETKUMAR SHITALBHAI",            "truptipatel25820@gmail.com",        "9586704350"),
-    "256290305147": ("PATEL NAITIKKUMAR DILIPBHAI",           "naitikpatel160309@gmail.com",       "9023305984"),
-    "256290305151": ("PATEL PAL KAMLESH",                     "palpatel1077@gmail.com",            "8460800169"),
-    "256290305152": ("PATEL PARTH MAHESHBHAI",                "maheshbhapatel764@gmail.com",       "9428021545"),
-    "256290305153": ("PATEL PAVANKUMAR SATISHBHAI",           "patelpavan0409@gmail.com",          "9978340351"),
-    "256290305156": ("PATEL SMIT MANISHBHAI",                 "patelsmit5630@gmail.com",           "9510840433"),
-    "256290305157": ("PATEL SMITKUMAR JITUBHAI",              "pijtu4646@gmail.com",               "7046307822"),
-    "256290305167": ("PATEL VRAJ RAKESHKUMAR",                "rmidhi12777@gmail.com",             "9537098899"),
-    "256290305168": ("PATEL YASHKUMAR PRATAPBHAI",            "yp608247@gmail.com",                "9537603338"),
+    "256290305004": ("AHIR DHRUVKUMAR JAYESHBHAI", "ahirjayesh269@gmail.com", "9099821439"),
+    "256290305006": ("AHIR MAYANKBHAI BIPINBHAI", "ahirmayank87@gmail.com", "7383624573"),
+    "256290305008": ("BARIYA DHRUVKUMAR ASHVINBHAI", "dhruvbariya766@gmail.com", "9313876921"),
+    "256290305010": ("BARIYA ROHIT MUKESH", "Sejalbariya29@gmail.com", "9023379994"),
+    "256290305012": ("BHIMDA SHUBHAMKUMAR NARENDRABHAI", "bhimdashubham2009@gmail.com", "8866311261"),
+    "256290305013": ("BUTANI KRISHIV KIRITBHAI", "Krishivbutani18025@gmail.com", "9601785530"),
+    "256290305015": ("CHAUHAN RAJVIR MAHENDRABHAI", "sushilabenmchauhan2008@gmail.com", "7069501390"),
+    "256290305023": ("DIWAN AMAN PYARMADAR", "diwanaman2160@gmail.com", "8160132906"),
+    "256290305024": ("DIWAN MOHMMEDZAID ILYASAGANI", "ZAIDGAMERZ2049@GMAIL.COM", "9512305072"),
+    "256290305026": ("GADARIYA MEET BHUPENDRASINH", "ddharatigararia@gmail.com", "9316167238"),
+    "256290305028": ("GANDHI JENIL PRAGNESHKUMAR", "gandhijenil1505@gmail.com", "6352907051"),
+    "256290305030": ("GHANCHI RIZAWAN YUNUSHBHAI", "Ghanchiyunush438@gmail.com", "7383902608"),
+    "256290305034": ("GOHIL DHAVALBHAI MUKESHBHAI", "gohildthaval0743@gmail.com", "9773404691"),
+    "256290305040": ("GOHIL NIRAV NARESHBHAI", "gohilanresh971@gmail.com", "9979388960"),
+    "256290305050": ("KACHHIYA KUSHALKUMAR SANJAYBHAI", "kachhiyakrinalkachhiya@gmail.com", "9998079666"),
+    "256290305055": ("KAYASTH NEEL PRADIPKUMAR", "shetalkayasht271@gmail.com", "9574859142"),
+    "256290305065": ("MACHHI BHARGAV MUKESHBHAI", "seemammachhi@gmail.com", "9723468510"),
+    "256290305068": ("MACHHI JAJUMAR JASHVANTBHAI", "jaswantmachhi2017@gmail.com", "9904936596"),
+    "256290305070": ("MACHHI MOHIT RAKESHBHAI", "kaddhadyas@gmail.com", "76968697024"),
+    "256290305071": ("MACHHI OMKUMAR ASHOKBHAI", "machhiom77@gmail.com", "9737852427"),
+    "256290305072": ("MACHHI PARTHIV HARISHANKAR", "suniele93@gmail.com", "9624549003"),
+    "256290305074": ("MACHHI SHUBHAM TARUNBHAI", "jigneshantdel12@gmail.com", "9904076390"),
+    "256290305076": ("MACHHI TANMAY PRAVINBHAI", "machhidivyang019@gmail.com", "8758250771"),
+    "256290305079": ("MAHIDA HARIPALSINH BHARATSINH", "mahidaharpal92@gmail.com", "7623049257"),
+    "256290305084": ("MAKWANA KABIRKUMAR PRITESHBHAI", "ndparmar2812@gmail.com", "9824533199"),
+    "256290305086": ("MAKWANA MAULIKBHAI VIMALBHAI", "maulikhapul42@gmail.com", "9328762041"),
+    "256290305087": ("MAKWANA NAITIK MAHENDRABHAI", "mahendramakwana88906@gmail.com", "9723847063"),
+    "256290305097": ("MISTRY HET JAYESHBHAI", "hetmistry1109@gmail.com", "9316358795"),
+    "256290305107": ("PAREKH YAKSH HIRENKUMAR", "yakshparekh12@gmail.com", "9725916209"),
+    "256290305122": ("PATANVADIYA TARUNBHAI RAJUBHAI", "rajuthakor9898236282@gmail.com", "9157784388"),
+    "256290305123": ("PATEL AYAN IRFANBHAI", "irfanpatel4423@gmail.com", "9227111284"),
+    "256290305124": ("PATEL AYUSH HARESHBHAI", "hareshpatel968@gmail.com", "8989280199"),
+    "256290305128": ("PATEL DHRUVALKUMAR PRAKASHBHAI", "pp6484077@gmail.com", "8460113560"),
+    "256290305129": ("PATEL DHRUVIK ANILBHAI", "dhruvik2009@gmail.com", "6352286480"),
+    "256290305132": ("PATEL FENILKUMAR KAMLESHBHAI", "patelkrish4927@gmail.com", "9313339032"),
+    "256290305134": ("PATEL HENIL SANJAYBHAI", "bmp407@gmail.com", "9638263597"),
+    "256290305135": ("PATEL HET PRADIPBHAI", "meshwapatel2595@gmail.com", "9825953167"),
+    "256290305139": ("PATEL JENISH MITULKUMAR", "jeniship2710@gmail.com", "9157507626"),
+    "256290305144": ("PATEL MEETKUMAR SHITALBHAI", "truptipatel25820@gmail.com", "9586704350"),
+    "256290305147": ("PATEL NAITIKKUMAR DILIPBHAI", "naitikpatel160309@gmail.com", "9023305984"),
+    "256290305151": ("PATEL PAL KAMLESH", "palpatel1077@gmail.com", "8460800169"),
+    "256290305152": ("PATEL PARTH MAHESHBHAI", "maheshbhapatel764@gmail.com", "9428021545"),
+    "256290305153": ("PATEL PAVANKUMAR SATISHBHAI", "patelpavan0409@gmail.com", "9978340351"),
+    "256290305156": ("PATEL SMIT MANISHBHAI", "patelsmit5630@gmail.com", "9510840433"),
+    "256290305157": ("PATEL SMITKUMAR JITUBHAI", "pijtu4646@gmail.com", "7046307822"),
+    "256290305167": ("PATEL VRAJ RAKESHKUMAR", "rmidhi12777@gmail.com", "9537098899"),
+    "256290305168": ("PATEL YASHKUMAR PRATAPBHAI", "yp608247@gmail.com", "9537603338"),
     "256290305170": ("PATHAN MOHAMMADSHAKIBKHAN SAJIDKHANMUZAFARKHAN", "SAKIBPATHAN9555@GMAIL.COM", "9274287156"),
-    "256290305171": ("PRAJAPATI ADITYAKUMAR HARENDRAKUMAR",   "adityaprajapati1055@gmail.com",     "9510571264"),
-    "256290305172": ("RAJ MAHIRAJ JITENDRASINH",              "rajmahiraj3636@gmail.com",          "7383434369"),
-    "256290305180": ("RATHOD MANAVBHAI DHARMESHBHAI",         "MANAVRATHOD2505@GMAIL.COM",         "7573838929"),
-    "256290305182": ("RATHOD RAHULBHAI GANPATBHAI",           "rahulrathod10889@gmail.com",        "6355289670"),
-    "256290305183": ("RATHOD SHIVANGI ARVINDBHAI",            "shivangirathod10@gmail.com",        "7069929564"),
-    "256290305186": ("ROHIT PARTHKUMAR PRAVINBHAI",           "pr1650493@gmail.com",               "8200339933"),
-    "256290305187": ("SAIYAD FAHIM ARIF",                     "zameergraphics09@gmail.com",        "9904144100"),
-    "256290305193": ("SODAVALA DHAVALKUMAR PRAVINBHAI",       "amar12@gmail.com",                  "9662413380"),
-    "256290305194": ("SOLANKI BHARGAVKUMAR ANILBHAI",         "anilmahida779@gmail.com",           "8980133850"),
-    "256290305195": ("SOLANKI PREM KARTIKBHAI",               "premnizama3112@gmail.com",          "9510068030"),
-    "256290305198": ("SUNAR NANDRAJ BHARAT",                  "BBOYPITER2@GMAIL.COM",              "9227074369"),
-    "256290305199": ("TANDEL PARTH VIJAYBHAI",                "tandelparijivijaybhai70@gmail.com", "8849536988"),
-    "256290305202": ("THAKOR VANSHKUMAR SURENDRABHAI",        "surendrathakor2178@gmail.com",      "9428687016"),
-    "256290305205": ("VAGHMARYA VISHALBHAI FULJIBHAI",        "jaydeeplala123@gmail.com",          "9979288800"),
-    "256290305210": ("VALAND BHAVYKUMAR NILESHBHAI",          "nileshbhaivaland@gmail.com",        "8849363689"),
-    "256290305212": ("VALAND VRAJ RAJUBHAI",                  "valandvraj26@gmail.com",            "9624993480"),
-    "256290305213": ("VANZA SHIVAM PARESHKUMAR",              "paresh.k.vanza@gmail.com",          "9727663902"),
-    "256290305215": ("VASAVA AYUSH KUMAR SATISHBHAI",         "skvasava213@gmail.com",             "9725908429"),
-    "256290305224": ("VASAVA YES BHIKHABHAI",                 "bhikhabhiavashava@gmail.com",       "9512464266"),
-    "256290305225": ("VORA JAYESH HIMMATBHAI",                "himatpatel529@gmail.com",           "9510923071"),
+    "256290305171": ("PRAJAPATI ADITYAKUMAR HARENDRAKUMAR", "adityaprajapati1055@gmail.com", "9510571264"),
+    "256290305172": ("RAJ MAHIRAJ JITENDRASINH", "rajmahiraj3636@gmail.com", "7383434369"),
+    "256290305180": ("RATHOD MANAVBHAI DHARMESHBHAI", "MANAVRATHOD2505@GMAIL.COM", "7573838929"),
+    "256290305182": ("RATHOD RAHULBHAI GANPATBHAI", "rahulrathod10889@gmail.com", "6355289670"),
+    "256290305183": ("RATHOD SHIVANGI ARVINDBHAI", "shivangirathod10@gmail.com", "7069929564"),
+    "256290305186": ("ROHIT PARTHKUMAR PRAVINBHAI", "pr1650493@gmail.com", "8200339933"),
+    "256290305187": ("SAIYAD FAHIM ARIF", "zameergraphics09@gmail.com", "9904144100"),
+    "256290305193": ("SODAVALA DHAVALKUMAR PRAVINBHAI", "amar12@gmail.com", "9662413380"),
+    "256290305194": ("SOLANKI BHARGAVKUMAR ANILBHAI", "anilmahida779@gmail.com", "8980133850"),
+    "256290305195": ("SOLANKI PREM KARTIKBHAI", "premnizama3112@gmail.com", "9510068030"),
+    "256290305198": ("SUNAR NANDRAJ BHARAT", "BBOYPITER2@GMAIL.COM", "9227074369"),
+    "256290305199": ("TANDEL PARTH VIJAYBHAI", "tandelparijivijaybhai70@gmail.com", "8849536988"),
+    "256290305202": ("THAKOR VANSHKUMAR SURENDRABHAI", "surendrathakor2178@gmail.com", "9428687016"),
+    "256290305205": ("VAGHMARYA VISHALBHAI FULJIBHAI", "jaydeeplala123@gmail.com", "9979288800"),
+    "256290305210": ("VALAND BHAVYKUMAR NILESHBHAI", "nileshbhaivaland@gmail.com", "8849363689"),
+    "256290305212": ("VALAND VRAJ RAJUBHAI", "valandvraj26@gmail.com", "9624993480"),
+    "256290305213": ("VANZA SHIVAM PARESHKUMAR", "paresh.k.vanza@gmail.com", "9727663902"),
+    "256290305215": ("VASAVA AYUSH KUMAR SATISHBHAI", "skvasava213@gmail.com", "9725908429"),
+    "256290305224": ("VASAVA YES BHIKHABHAI", "bhikhabhiavashava@gmail.com", "9512464266"),
+    "256290305225": ("VORA JAYESH HIMMATBHAI", "himatpatel529@gmail.com", "9510923071"),
 }
 
 # ═══════════════════════════════════════════════
-#  FLASK APP (Render ke liye — pehle define karo)
+#  DATA STORAGE (users, blocked, stats)
+# ═══════════════════════════════════════════════
+def load_data():
+    default = {"users": {}, "blocked": [], "total_searches": 0, "total_osint": 0}
+    if not os.path.exists(DATA_FILE):
+        return default
+    try:
+        with open(DATA_FILE, "r") as f:
+            data = json.load(f)
+        for k, v in default.items():
+            data.setdefault(k, v)
+        return data
+    except Exception:
+        return default
+
+
+def save_data(data):
+    try:
+        with open(DATA_FILE, "w") as f:
+            json.dump(data, f, indent=2)
+    except Exception:
+        pass
+
+
+BOT_DATA = load_data()
+
+
+def track_user(user):
+    """Har message pe user track karo."""
+    uid = str(user.id)
+    changed = False
+    if uid not in BOT_DATA["users"]:
+        BOT_DATA["users"][uid] = {
+            "id": user.id,
+            "name": user.full_name,
+            "username": user.username or "",
+            "first_seen": str(pd.Timestamp.now()),
+            "last_seen": str(pd.Timestamp.now()),
+            "searches": 0,
+        }
+        changed = True
+    else:
+        BOT_DATA["users"][uid]["last_seen"] = str(pd.Timestamp.now())
+        BOT_DATA["users"][uid]["searches"] = BOT_DATA["users"][uid].get("searches", 0) + 1
+        changed = True
+    if changed:
+        save_data(BOT_DATA)
+
+
+def is_admin(user_id):
+    return ADMIN_USER_ID != 0 and user_id == ADMIN_USER_ID
+
+
+def is_blocked(user_id):
+    return str(user_id) in BOT_DATA.get("blocked", [])
+
+
+# ═══════════════════════════════════════════════
+#  FLASK (Render health check)
 # ═══════════════════════════════════════════════
 flask_app = Flask(__name__)
 
@@ -151,11 +209,11 @@ flask_app = Flask(__name__)
 @flask_app.route("/")
 @flask_app.route("/health")
 def health_check():
-    total = len(DF) if "DF" in globals() else 0
     return jsonify({
         "status": "ok",
         "service": "Student Finder Bot",
-        "students": total,
+        "students": len(DF) if "DF" in globals() else 0,
+        "users": len(BOT_DATA.get("users", {})),
     })
 
 
@@ -203,11 +261,10 @@ def _find_enrollment_col(df):
 
 
 # ═══════════════════════════════════════════════
-#  LOAD + MERGE
+#  LOAD + MERGE DATA
 # ═══════════════════════════════════════════════
 def load_students():
     dfs = []
-
     if os.path.exists(EXCEL_FILE):
         try:
             xl = pd.ExcelFile(EXCEL_FILE)
@@ -224,19 +281,15 @@ def load_students():
                 dfs.append(df)
                 print(f"✅ Excel '{sheet}': {len(df)} rows")
         except Exception as e:
-            print(f"⚠️ Excel load fail: {e}")
-    else:
-        print(f"⚠️ Excel nahi mili: {EXCEL_FILE}")
+            print(f"⚠️ Excel fail: {e}")
 
     for csv_path in CSV_FILES:
         if not os.path.exists(csv_path):
-            print(f"⚠️ '{csv_path}' nahi mili, skip")
             continue
         try:
             df = pd.read_csv(csv_path, header=HEADER_ROW, dtype=str, on_bad_lines="skip")
             df = df.dropna(how="all")
             if df.empty:
-                print(f"ℹ️ '{csv_path}' empty, skip")
                 continue
             df["__source__"] = f"csv:{csv_path}"
             dfs.append(df)
@@ -251,14 +304,13 @@ def load_students():
         enr_col = _find_enrollment_col(df)
         if enr_col:
             df.rename(columns={enr_col: "Enrollment"}, inplace=True)
-        else:
-            if len(df.columns) >= 3:
-                df.rename(columns={df.columns[2]: "Enrollment"}, inplace=True)
+        elif len(df.columns) >= 3:
+            df.rename(columns={df.columns[2]: "Enrollment"}, inplace=True)
         df["__norm_enr__"] = df["Enrollment"].apply(normalize_enr) if "Enrollment" in df.columns else ""
 
     base = max(dfs, key=lambda d: d.shape[1]).copy()
     others = [d for d in dfs if d is not base]
-    print(f"\n📌 BASE: '{base['__source__'].iloc[0]}' ({base.shape[1]} columns)")
+    print(f"📌 BASE: '{base['__source__'].iloc[0]}' ({base.shape[1]} cols)")
     base["__row_id__"] = base.index.astype(str)
 
     for other in others:
@@ -287,16 +339,14 @@ def load_students():
                 if _is_empty(base.at[idx, col]) and not _is_empty(erow[col]):
                     base.at[idx, col] = erow[col]
                     filled += 1
-        print(f"✅ Enrich '{other['__source__'].iloc[0]}': {filled} fields bhare")
+        print(f"✅ Enrich: {filled} fields bhare")
 
-    sc_count = 0
     for idx, row in base.iterrows():
         k = row["__norm_enr__"]
         if k in SCREENSHOT_DATA:
             name, email, mobile = SCREENSHOT_DATA[k]
             if _is_empty(row.get("Name of Student")) and name:
                 base.at[idx, "Name of Student"] = name
-                sc_count += 1
             for col in ["Registered Email", "Email"]:
                 if col in base.columns and _is_empty(row.get(col)):
                     base.at[idx, col] = email
@@ -305,7 +355,6 @@ def load_students():
                 if col in base.columns and _is_empty(row.get(col)):
                     base.at[idx, col] = mobile
                     break
-    print(f"✅ Screenshot data: {sc_count} naam bhare")
 
     if "Name of Student" not in base.columns:
         base["Name of Student"] = ""
@@ -316,7 +365,6 @@ def load_students():
     base = pd.concat([real, notreal], ignore_index=True)
 
     print(f"\n📊 TOTAL students: {len(base)}")
-    print(f"📊 Total columns: {base.shape[1]}")
     return base
 
 
@@ -396,22 +444,14 @@ def format_student_telegram(row):
 
 def extract_contacts(row):
     email = None
-    for col in ["Email", "Registered Email", "Father's Email Address"]:
+    for col in ["Email", "Registered Email"]:
         if col in row.index:
             v = clean_val(row[col])
-            if v and "@" in v and "father" not in col.lower():
+            if v and "@" in v:
                 email = v.split()[0].strip()
                 break
-    if not email:
-        for col in ["Email", "Registered Email"]:
-            if col in row.index:
-                v = clean_val(row[col])
-                if v and "@" in v:
-                    email = v
-                    break
-
     mobile = None
-    for col in ["Contact Number", "Registered Mobile Number", "Father's Mobile No."]:
+    for col in ["Contact Number", "Registered Mobile Number"]:
         if col in row.index:
             v = clean_val(row[col])
             if v:
@@ -419,43 +459,36 @@ def extract_contacts(row):
                 if len(digits) >= 10:
                     mobile = digits[-10:]
                     break
-
     username = email.split("@")[0] if email else None
     return email, mobile, username
 
 
 # ═══════════════════════════════════════════════
-#  🕵️ OSINT FUNCTIONS
+#  OSINT
 # ═══════════════════════════════════════════════
 OSINT_HEADERS = {"User-Agent": "Mozilla/5.0 (Linux; Android 10)"}
 
 USERNAME_SITES = [
-    ("GitHub",       "https://github.com/{}"),
-    ("Twitter/X",    "https://x.com/{}"),
-    ("Instagram",    "https://instagram.com/{}"),
-    ("Reddit",       "https://reddit.com/user/{}"),
-    ("Pinterest",    "https://pinterest.com/{}"),
-    ("Medium",       "https://medium.com/@{}"),
-    ("Dev.to",       "https://dev.to/{}"),
-    ("HackerNews",   "https://news.ycombinator.com/user?id={}"),
-    ("Behance",      "https://behance.net/{}"),
-    ("Dribbble",     "https://dribbble.com/{}"),
-    ("SoundCloud",   "https://soundcloud.com/{}"),
-    ("Twitch",       "https://twitch.tv/{}"),
-    ("YouTube",      "https://youtube.com/@{}"),
-    ("Telegram",     "https://t.me/{}"),
-    ("Facebook",     "https://facebook.com/{}"),
-    ("LinkedIn",     "https://linkedin.com/in/{}"),
-    ("Snapchat",     "https://snapchat.com/add/{}"),
-    ("TikTok",       "https://tiktok.com/@{}"),
-    ("Steam",        "https://steamcommunity.com/id/{}"),
-    ("Mastodon",     "https://mastodon.social/@{}"),
-    ("CodePen",      "https://codepen.io/{}"),
-    ("Replit",       "https://replit.com/@{}"),
-    ("HackerRank",   "https://hackerrank.com/{}"),
-    ("LeetCode",     "https://leetcode.com/{}"),
-    ("Keybase",      "https://keybase.io/{}"),
-    ("About.me",     "https://about.me/{}"),
+    ("GitHub", "https://github.com/{}"),
+    ("Twitter/X", "https://x.com/{}"),
+    ("Instagram", "https://instagram.com/{}"),
+    ("Reddit", "https://reddit.com/user/{}"),
+    ("Pinterest", "https://pinterest.com/{}"),
+    ("Medium", "https://medium.com/@{}"),
+    ("Dev.to", "https://dev.to/{}"),
+    ("Behance", "https://behance.net/{}"),
+    ("Dribbble", "https://dribbble.com/{}"),
+    ("SoundCloud", "https://soundcloud.com/{}"),
+    ("Twitch", "https://twitch.tv/{}"),
+    ("YouTube", "https://youtube.com/@{}"),
+    ("Telegram", "https://t.me/{}"),
+    ("Facebook", "https://facebook.com/{}"),
+    ("LinkedIn", "https://linkedin.com/in/{}"),
+    ("Snapchat", "https://snapchat.com/add/{}"),
+    ("TikTok", "https://tiktok.com/@{}"),
+    ("Steam", "https://steamcommunity.com/id/{}"),
+    ("CodePen", "https://codepen.io/{}"),
+    ("Replit", "https://replit.com/@{}"),
 ]
 
 
@@ -472,15 +505,11 @@ def osint_email_block(email):
     if not re.fullmatch(r"[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}", email):
         out.append("❌ Invalid format")
         return "\n".join(out)
-
     domain = email.split("@", 1)[1]
-
     try:
         r = requests.get(
             f"https://haveibeenpwned.com/api/v3/breachedaccount/{urllib.parse.quote(email)}?truncateResponse=true",
-            headers={"User-Agent": "OSINT-Tool"},
-            timeout=10
-        )
+            headers={"User-Agent": "OSINT-Tool"}, timeout=10)
         if r.status_code == 200:
             breaches = r.json()
             out.append(f"🚨 <b>{len(breaches)} breach(es)!</b>")
@@ -501,12 +530,9 @@ def osint_email_block(email):
                          headers=OSINT_HEADERS, timeout=6)
         if r.status_code == 200:
             data = r.json().get("entry", [{}])[0]
-            out.append(f"🖼️ <b>Gravatar:</b> ✅ Profile mila")
+            out.append("🖼️ <b>Gravatar:</b> ✅ Profile mila")
             if data.get("displayName"):
                 out.append(f"   👤 {esc(data['displayName'])}")
-            if data.get("accounts"):
-                accs = [f"{a.get('shortname','?')}" for a in data["accounts"][:5]]
-                out.append(f"   🔗 Linked: {esc(', '.join(accs))}")
         else:
             out.append("🖼️ Gravatar: ❌")
     except Exception:
@@ -516,7 +542,7 @@ def osint_email_block(email):
         mx = dns.resolver.resolve(domain, "MX")
         out.append(f"📮 MX: ✅ {esc(str(mx[0].exchange).rstrip('.'))}")
     except Exception:
-        out.append("📮 MX: ❌ (fake domain?)")
+        out.append("📮 MX: ❌")
 
     return "\n".join(out)
 
@@ -526,99 +552,61 @@ def osint_mobile_block(mobile):
     num = re.sub(r"\D", "", mobile)
     if len(num) == 10:
         num = "+91" + num
-
     try:
         p = phonenumbers.parse(num, None)
         if not phonenumbers.is_valid_number(p):
             out.append("❌ Invalid number")
             return "\n".join(out)
-
         country = geocoder.description_for_number(p, "en") or "?"
         carr = carrier.name_for_number(p, "en") or "Unknown"
         out.append(f"🌍 {esc(country)} | 📡 {esc(carr)}")
-
         ntype = phonenumbers.number_type(p)
-        type_map = {0: "📱 Mobile", 1: "☎️ Landline", 2: "📞 Fixed/Mobile",
-                    3: "🆓 Toll-free", 4: "💰 Premium", 6: "💻 VoIP"}
+        type_map = {0: "📱 Mobile", 1: "☎️ Landline", 2: "📞 Fixed/Mobile", 6: "💻 VoIP"}
         out.append(f"📋 {type_map.get(ntype, 'Other')}")
-
         last10 = num[-10:]
-        out.append(f"🔗 <a href='https://wa.me/91{last10}'>WhatsApp</a>")
-        out.append(f"🔗 <a href='https://t.me/+{num}'>Telegram</a>")
-        out.append(f"🔗 <a href='https://www.truecaller.com/search/in/{last10}'>Truecaller</a>")
+        out.append(f"🔗 <a href='https://wa.me/91{last10}'>WhatsApp</a> | <a href='https://t.me/+{num}'>Telegram</a>")
     except Exception as e:
         out.append(f"⚠️ {esc(str(e))}")
-
     return "\n".join(out)
 
 
-def osint_username_block(username, max_sites=25):
+def osint_username_block(username, max_sites=20):
     out = ["<b>👤 USERNAME HUNT</b>", f"<code>@{esc(username)}</code>"]
-
     if not re.fullmatch(r"[a-zA-Z0-9_.-]{2,32}", username):
         out.append("❌ Invalid username")
         return "\n".join(out)
-
     found = []
     for name, url_tmpl in USERNAME_SITES[:max_sites]:
-        url = url_tmpl.format(username)
-        if _url_exists(url):
-            found.append((name, url))
-
+        if _url_exists(url_tmpl.format(username)):
+            found.append((name, url_tmpl.format(username)))
     if found:
-        out.append(f"✅ <b>{len(found)} ACCOUNTS FOUND:</b>")
+        out.append(f"✅ <b>{len(found)} accounts:</b>")
         for name, url in found:
             out.append(f"   • <a href='{url}'>{esc(name)}</a>")
     else:
-        out.append("❌ 0 ACCOUNTS FOUND")
-
+        out.append("❌ 0 accounts found")
     return "\n".join(out)
 
 
 def auto_osint_report(row):
     email, mobile, username = extract_contacts(row)
-
     if not email and not mobile and not username:
         return None
-
     blocks = []
-
     if email:
-        try:
-            blocks.append(osint_email_block(email))
-        except Exception as e:
-            blocks.append(f"<b>📧 EMAIL INTEL</b>\n⚠️ Error: {esc(str(e))}")
-
+        try: blocks.append(osint_email_block(email))
+        except Exception as e: blocks.append(f"⚠️ Email error: {esc(str(e))}")
     if mobile:
-        try:
-            blocks.append(osint_mobile_block(mobile))
-        except Exception as e:
-            blocks.append(f"<b>📱 MOBILE INTEL</b>\n⚠️ Error: {esc(str(e))}")
-
+        try: blocks.append(osint_mobile_block(mobile))
+        except Exception as e: blocks.append(f"⚠️ Mobile error: {esc(str(e))}")
     if username:
-        try:
-            blocks.append(osint_username_block(username, max_sites=20))
-        except Exception as e:
-            blocks.append(f"<b>👤 USERNAME HUNT</b>\n⚠️ Error: {esc(str(e))}")
-
+        try: blocks.append(osint_username_block(username))
+        except Exception as e: blocks.append(f"⚠️ Username error: {esc(str(e))}")
     return "\n\n━━━━━━━━━━━━━━━\n\n".join(blocks)
 
 
 # ═══════════════════════════════════════════════
-#  🎬 TYPING ANIMATION
-# ═══════════════════════════════════════════════
-async def typing_animation(context, chat_id, seconds=3):
-    end = asyncio.get_event_loop().time() + seconds
-    while asyncio.get_event_loop().time() < end:
-        try:
-            await context.bot.send_chat_action(chat_id=chat_id, action="typing")
-        except Exception:
-            pass
-        await asyncio.sleep(2.5)
-
-
-# ═══════════════════════════════════════════════
-#  🎯 ROAST
+#  ROAST
 # ═══════════════════════════════════════════════
 def is_target(q):
     raw = str(q).lower().strip()
@@ -633,19 +621,225 @@ def is_target(q):
         if mob in mobile_only:
             return True
     name_only = re.sub(r"[^a-z ]", " ", raw)
-    hits = sum(1 for tok in TARGET_NAME_TOKENS if tok in name_only)
-    return hits >= 2
+    return sum(1 for tok in TARGET_NAME_TOKENS if tok in name_only) >= 2
+
+
+# ═══════════════════════════════════════════════
+#  ADMIN PANEL
+# ═══════════════════════════════════════════════
+def admin_keyboard():
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("📊 Stats", callback_data="admin_stats"),
+         InlineKeyboardButton("👥 Users", callback_data="admin_users")],
+        [InlineKeyboardButton("🚫 Blocked", callback_data="admin_blocked"),
+         InlineKeyboardButton("📢 Broadcast", callback_data="admin_broadcast")],
+        [InlineKeyboardButton("🔄 Reload Data", callback_data="admin_reload"),
+         InlineKeyboardButton("❌ Close", callback_data="admin_close")],
+    ])
+
+
+async def admin_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not is_admin(update.effective_user.id):
+        await update.message.reply_text("🚫 Access denied. Admin only.")
+        return
+    await update.message.reply_text(
+        "👑 <b>ADMIN PANEL</b>\n\nChoose an option:",
+        parse_mode="HTML",
+        reply_markup=admin_keyboard()
+    )
+
+
+async def admin_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+
+    if not is_admin(query.from_user.id):
+        await query.edit_message_text("🚫 Access denied.")
+        return
+
+    data = query.data
+
+    if data == "admin_close":
+        await query.edit_message_text("❌ Admin panel closed.")
+        return
+
+    if data == "admin_stats":
+        total_users = len(BOT_DATA.get("users", {}))
+        total_searches = BOT_DATA.get("total_searches", 0)
+        blocked_count = len(BOT_DATA.get("blocked", []))
+        text = (
+            f"📊 <b>BOT STATS</b>\n\n"
+            f"👥 Total users: <b>{total_users}</b>\n"
+            f"🔍 Total searches: <b>{total_searches}</b>\n"
+            f"🚫 Blocked users: <b>{blocked_count}</b>\n"
+            f"📚 Students in DB: <b>{len(DF)}</b>\n"
+            f"📁 Sources: <b>{len(CSV_FILES) + 1}</b> files\n"
+        )
+        await query.edit_message_text(text, parse_mode="HTML",
+                                      reply_markup=admin_keyboard())
+        return
+
+    if data == "admin_users":
+        users = BOT_DATA.get("users", {})
+        if not users:
+            await query.edit_message_text("👥 No users yet.",
+                                          reply_markup=admin_keyboard())
+            return
+        # Top 20 recent
+        sorted_users = sorted(users.values(),
+                              key=lambda u: u.get("last_seen", ""),
+                              reverse=True)[:20]
+        lines = ["👥 <b>RECENT USERS (Top 20)</b>\n"]
+        for u in sorted_users:
+            uname = f"@{u['username']}" if u.get("username") else "—"
+            name = u.get("name", "Unknown")
+            sid = u.get("id")
+            searches = u.get("searches", 0)
+            blocked = "🚫" if is_blocked(sid) else ""
+            lines.append(f"• <b>{esc(name)}</b> {blocked}\n"
+                         f"  🆔 <code>{sid}</code> | {esc(uname)}\n"
+                         f"  🔍 Searches: {searches}")
+        text = "\n".join(lines)
+        # Truncate if too long
+        if len(text) > 3800:
+            text = text[:3800] + "\n…"
+        await query.edit_message_text(text, parse_mode="HTML",
+                                      reply_markup=admin_keyboard())
+        return
+
+    if data == "admin_blocked":
+        blocked = BOT_DATA.get("blocked", [])
+        if not blocked:
+            text = "🚫 <b>Blocked users:</b> None"
+        else:
+            lines = ["🚫 <b>BLOCKED USERS</b>\n"]
+            for uid in blocked:
+                u = BOT_DATA["users"].get(str(uid), {})
+                name = u.get("name", "Unknown")
+                lines.append(f"• <code>{uid}</code> — {esc(name)}")
+            text = "\n".join(lines)
+        await query.edit_message_text(text, parse_mode="HTML",
+                                      reply_markup=admin_keyboard())
+        return
+
+    if data == "admin_broadcast":
+        await query.edit_message_text(
+            "📢 <b>BROADCAST</b>\n\n"
+            "Send a message using:\n"
+            "<code>/broadcast Your message here</code>\n\n"
+            "Message will be sent to all users.",
+            parse_mode="HTML",
+            reply_markup=admin_keyboard()
+        )
+        return
+
+    if data == "admin_reload":
+        try:
+            global DF
+            DF = load_students()
+            await query.edit_message_text(
+                f"🔄 <b>Data Reloaded!</b>\n\n"
+                f"📊 Total students: <b>{len(DF)}</b>",
+                parse_mode="HTML",
+                reply_markup=admin_keyboard()
+            )
+        except Exception as e:
+            await query.edit_message_text(f"❌ Reload failed: {esc(str(e))}",
+                                          parse_mode="HTML",
+                                          reply_markup=admin_keyboard())
+        return
+
+
+async def broadcast_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not is_admin(update.effective_user.id):
+        await update.message.reply_text("🚫 Access denied.")
+        return
+    if not context.args:
+        await update.message.reply_text(
+            "Usage: <code>/broadcast Your message</code>",
+            parse_mode="HTML"
+        )
+        return
+
+    message = " ".join(context.args)
+    users = BOT_DATA.get("users", {})
+    blocked = BOT_DATA.get("blocked", [])
+
+    sent = 0
+    failed = 0
+    status_msg = await update.message.reply_text(
+        f"📢 Broadcasting to {len(users)} users...")
+
+    for uid, u in users.items():
+        if uid in blocked:
+            continue
+        try:
+            await context.bot.send_message(
+                chat_id=int(uid),
+                text=f"📢 <b>Announcement</b>\n\n{esc(message)}",
+                parse_mode="HTML"
+            )
+            sent += 1
+            await asyncio.sleep(0.1)  # rate limit
+        except Exception:
+            failed += 1
+
+    await status_msg.edit_text(
+        f"✅ <b>Broadcast complete</b>\n\n"
+        f"📤 Sent: <b>{sent}</b>\n"
+        f"❌ Failed: <b>{failed}</b>",
+        parse_mode="HTML"
+    )
+
+
+async def block_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not is_admin(update.effective_user.id):
+        return
+    if not context.args:
+        await update.message.reply_text("Usage: <code>/block USER_ID</code>",
+                                        parse_mode="HTML")
+        return
+    uid = str(context.args[0]).strip()
+    if uid not in BOT_DATA["blocked"]:
+        BOT_DATA["blocked"].append(uid)
+        save_data(BOT_DATA)
+        await update.message.reply_text(f"🚫 Blocked: <code>{uid}</code>",
+                                        parse_mode="HTML")
+    else:
+        await update.message.reply_text("Already blocked.")
+
+
+async def unblock_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not is_admin(update.effective_user.id):
+        return
+    if not context.args:
+        await update.message.reply_text("Usage: <code>/unblock USER_ID</code>",
+                                        parse_mode="HTML")
+        return
+    uid = str(context.args[0]).strip()
+    if uid in BOT_DATA["blocked"]:
+        BOT_DATA["blocked"].remove(uid)
+        save_data(BOT_DATA)
+        await update.message.reply_text(f"✅ Unblocked: <code>{uid}</code>",
+                                        parse_mode="HTML")
+    else:
+        await update.message.reply_text("Not in block list.")
 
 
 # ═══════════════════════════════════════════════
 #  TELEGRAM HANDLERS
 # ═══════════════════════════════════════════════
 async def start_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user = update.effective_user
+    if is_blocked(user.id):
+        return
+    track_user(user)
+
     text = (
-        "⚠️ Disclaimer: This bot is intended for educational and administrative "
+        "⚠️ Disclaimer: This bot is for educational and administrative "
         "purposes only. The owner/developer assumes no liability for any misuse, "
         "privacy violations, or illegal activities conducted by users. Use responsibly.\n\n"
-        "USE - Send Name, enrollment, email, mobile, city, branch, caste\n\n"
+        "USAGE — Send Name, enrollment, email, mobile, city, branch, caste\n\n"
         "🔎 Examples:\n"
         "• AHIR AYUSH\n"
         "• 256290305001\n"
@@ -655,22 +849,41 @@ async def start_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"📊 Total students: {len(DF)}\n"
         f"🕵️ Auto-OSINT: {'ON' if ENABLE_AUTO_OSINT else 'OFF'}"
     )
+    if is_admin(user.id):
+        text += "\n\n👑 /admin — Admin Panel"
     await update.message.reply_text(text)
 
 
-async def help_cmd(update, context):
+async def help_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await start_cmd(update, context)
 
 
+async def myid_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user = update.effective_user
+    await update.message.reply_text(
+        f"🆔 Your Telegram ID: <code>{user.id}</code>\n"
+        f"👤 Name: {esc(user.full_name)}\n"
+        f"🔗 Username: @{user.username or 'none'}",
+        parse_mode="HTML"
+    )
+
+
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user = update.effective_user
+    if is_blocked(user.id):
+        return
+
     query = (update.message.text or "").strip()
     if not query:
         return
 
+    track_user(user)
+    BOT_DATA["total_searches"] = BOT_DATA.get("total_searches", 0) + 1
+
     # 🎯 ROAST
     if is_target(query):
         await context.bot.send_chat_action(chat_id=update.effective_chat.id, action="typing")
-        await asyncio.sleep(1.5)
+        await asyncio.sleep(1.2)
         roast = random.choice(ROASTS).format(q=esc(query))
         await update.message.reply_text(roast, parse_mode="HTML")
         return
@@ -692,7 +905,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     total = len(results)
-
     await update.message.reply_text(
         f"✅ <b>{total}</b> result(s) found for <b>{esc(query)}</b>:",
         parse_mode="HTML"
@@ -700,7 +912,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     for i, (_, row) in enumerate(results.head(MAX_RESULTS).iterrows(), 1):
         await context.bot.send_chat_action(chat_id=update.effective_chat.id, action="typing")
-        await asyncio.sleep(0.8)
+        await asyncio.sleep(0.5)
 
         block = f"<b>━━━ #{i} ━━━</b>\n" + format_student_telegram(row)
         chunks = [block[j:j+3800] for j in range(0, len(block), 3800)]
@@ -715,20 +927,20 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         # 🕵️ AUTO-OSINT
         if ENABLE_AUTO_OSINT and i == 1 and not is_target(query):
+            BOT_DATA["total_osint"] = BOT_DATA.get("total_osint", 0) + 1
             osint_msg = await update.message.reply_text(
                 "🕵️ <b>Auto-Investigation start...</b>\n"
                 "<i>Email, Mobile, Username checking...</i>",
                 parse_mode="HTML"
             )
-
             for stage in [
-                "🔍 <b>Stage 1/4:</b> Email intel... <i>(breaches + gravatar)</i>",
+                "🔍 <b>Stage 1/4:</b> Email intel...",
                 "📡 <b>Stage 2/4:</b> Mobile carrier intel...",
-                "👤 <b>Stage 3/4:</b> Username hunt (25+ sites)...",
+                "👤 <b>Stage 3/4:</b> Username hunt...",
                 "🧩 <b>Stage 4/4:</b> Report compile...",
             ]:
                 await context.bot.send_chat_action(chat_id=update.effective_chat.id, action="typing")
-                await asyncio.sleep(0.7)
+                await asyncio.sleep(0.6)
                 try:
                     await osint_msg.edit_text(stage, parse_mode="HTML")
                 except Exception:
@@ -746,21 +958,24 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 full = header + report
                 chunks = [full[j:j+3800] for j in range(0, len(full), 3800)]
                 try:
-                    await osint_msg.edit_text(chunks[0], parse_mode="HTML", disable_web_page_preview=True)
+                    await osint_msg.edit_text(chunks[0], parse_mode="HTML",
+                                              disable_web_page_preview=True)
                 except Exception:
                     await osint_msg.edit_text(re.sub(r"<[^>]+>", "", chunks[0])[:4000])
                 for c in chunks[1:]:
-                    await context.bot.send_chat_action(chat_id=update.effective_chat.id, action="typing")
-                    await asyncio.sleep(0.5)
+                    await asyncio.sleep(0.3)
                     try:
-                        await update.message.reply_text(c, parse_mode="HTML", disable_web_page_preview=True)
+                        await update.message.reply_text(c, parse_mode="HTML",
+                                                        disable_web_page_preview=True)
                     except Exception:
                         await update.message.reply_text(re.sub(r"<[^>]+>", "", c)[:4000])
             else:
                 try:
-                    await osint_msg.edit_text("🕵️ No email/mobile available for OSINT on this student.")
+                    await osint_msg.edit_text("🕵️ No email/mobile for OSINT.")
                 except Exception:
                     pass
+
+    save_data(BOT_DATA)
 
     if total > MAX_RESULTS:
         await update.message.reply_text(
@@ -770,25 +985,34 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 # ═══════════════════════════════════════════════
-#  FLASK RUNNER + TELEGRAM MAIN
+#  FLASK + BOT RUNNER
 # ═══════════════════════════════════════════════
 def run_flask():
     port = int(os.environ.get("PORT", 8080))
-    print(f"🌐 Flask server starting on port {port}")
+    print(f"🌐 Flask starting on port {port}")
     flask_app.run(host="0.0.0.0", port=port, debug=False, use_reloader=False)
 
 
 def main():
-    # Flask ko background thread me chalao
+    if ADMIN_USER_ID == 0:
+        print("⚠️ ADMIN_USER_ID not set! Admin panel disabled.")
+        print("   Set ADMIN_USER_ID env variable or change in code.")
+
     flask_thread = threading.Thread(target=run_flask, daemon=True)
     flask_thread.start()
 
-    # Telegram bot foreground me
     app = ApplicationBuilder().token(BOT_TOKEN).build()
     app.add_handler(CommandHandler("start", start_cmd))
     app.add_handler(CommandHandler("help", help_cmd))
+    app.add_handler(CommandHandler("myid", myid_cmd))
+    app.add_handler(CommandHandler("admin", admin_cmd))
+    app.add_handler(CommandHandler("broadcast", broadcast_cmd))
+    app.add_handler(CommandHandler("block", block_cmd))
+    app.add_handler(CommandHandler("unblock", unblock_cmd))
+    app.add_handler(CallbackQueryHandler(admin_callback, pattern="^admin_"))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
-    print("🤖 Bot is running... Press Ctrl+C to stop.")
+
+    print("🤖 Bot is running...")
     app.run_polling()
 
 
