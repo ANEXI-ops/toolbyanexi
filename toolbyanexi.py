@@ -650,6 +650,7 @@ async def admin_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def admin_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    global DF
     query = update.callback_query
     await query.answer()
 
@@ -735,7 +736,6 @@ async def admin_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if data == "admin_reload":
         try:
-            global DF
             DF = load_students()
             await query.edit_message_text(
                 f"🔄 <b>Data Reloaded!</b>\n\n"
